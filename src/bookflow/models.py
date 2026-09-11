@@ -25,4 +25,5 @@ class Loan:
     reader_id: str
     reader_name: str
     borrowed_at: str
+    due_at: str
     returned_at: str | None

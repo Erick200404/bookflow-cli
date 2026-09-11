@@ -6,7 +6,7 @@ from .models import Book, Loan, Reader
 
 LOAN_SELECT = """
     SELECT l.loan_id, l.isbn, b.title, l.reader_id,
-           r.name AS reader_name, l.borrowed_at, l.returned_at
+           r.name AS reader_name, l.borrowed_at, l.due_at, l.returned_at
     FROM loans AS l
     JOIN books AS b ON b.isbn = l.isbn
     JOIN readers AS r ON r.reader_id = l.reader_id
@@ -47,10 +47,10 @@ class Repository:
         ).fetchone()
         return Loan(**dict(row)) if row else None
 
-    def insert_loan(self, isbn: str, reader_id: str, borrowed_at: str) -> Loan:
+    def insert_loan(self, isbn: str, reader_id: str, borrowed_at: str, due_at: str) -> Loan:
         cursor = self.connection.execute(
-            "INSERT INTO loans (isbn, reader_id, borrowed_at) VALUES (?, ?, ?)",
-            (isbn, reader_id, borrowed_at),
+            "INSERT INTO loans (isbn, reader_id, borrowed_at, due_at) VALUES (?, ?, ?, ?)",
+            (isbn, reader_id, borrowed_at, due_at),
         )
         return self.get_loan(cursor.lastrowid)
 

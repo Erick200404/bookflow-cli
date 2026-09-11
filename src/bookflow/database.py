@@ -6,8 +6,9 @@ import sqlite3
 from collections.abc import Iterator
 
 from .errors import BookFlowError
+from .time_utils import due_date
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA = (
     """CREATE TABLE books (
         isbn TEXT PRIMARY KEY NOT NULL CHECK (length(trim(isbn)) > 0),
@@ -23,6 +24,7 @@ SCHEMA = (
         isbn TEXT NOT NULL REFERENCES books(isbn),
         reader_id TEXT NOT NULL REFERENCES readers(reader_id),
         borrowed_at TEXT NOT NULL,
+        due_at TEXT NOT NULL,
         returned_at TEXT
     )""",
     """CREATE UNIQUE INDEX one_active_loan_per_book
@@ -68,6 +70,10 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
             return
+        if version == 1:
+            migrate_v1(connection)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
         if version != 0:
             raise BookFlowError(f"不支持的数据库版本：{version}。")
         existing = connection.execute(
@@ -78,3 +84,22 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         for statement in SCHEMA:
             connection.execute(statement)
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def migrate_v1(connection: sqlite3.Connection) -> None:
+    """Rebuild loans inside the caller's transaction, preserving IDs and history."""
+    connection.execute(SCHEMA[2].replace("CREATE TABLE loans", "CREATE TABLE loans_v2"))
+    for row in connection.execute("SELECT * FROM loans ORDER BY loan_id"):
+        try:
+            due_at = due_date(row["borrowed_at"], 14)
+        except (ValueError, TypeError, OverflowError) as error:
+            raise BookFlowError(f"数据库升级失败：借阅 #{row['loan_id']} 的借出时间无效：{error}") from error
+        connection.execute(
+            """INSERT INTO loans_v2
+               (loan_id, isbn, reader_id, borrowed_at, due_at, returned_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (row["loan_id"], row["isbn"], row["reader_id"], row["borrowed_at"], due_at, row["returned_at"]),
+        )
+    connection.execute("DROP TABLE loans")
+    connection.execute("ALTER TABLE loans_v2 RENAME TO loans")
+    connection.execute(SCHEMA[3])
